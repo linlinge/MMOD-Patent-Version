@@ -1,0 +1,156 @@
+#include <iostream>	
+#include "PCLExtend.h"
+#include "V3.hpp"
+#include "DataMining.h"
+#include "ImprovedLoop.h"
+#include "EdgeDetection.h"
+#include <Eigen/Dense>
+#include <omp.h>
+#include "AngleBasedOutlier.h"
+#include "PointSetFeatures.h"
+#include "Table.h"
+
+
+// Patch Iterator Outlier Removal
+void PatchBasedOutlierRemoval(pcl::PointCloud<PointType>::Ptr cloud)
+{
+	EvalAndEvec vv(cloud);	
+	double total_minor=vv.eigenvalue_[0];
+	
+	for(int i=0;i<cloud->points.size();i++){
+		pcl::PointCloud<PointType>::Ptr ptmp(new pcl::PointCloud<PointType>);
+		for(int j=0;j<cloud->points.size();j++){
+			if(i!=j){
+				ptmp->points.push_back(cloud->points[j]);
+			}
+		}
+		vv.GetEvalAndEvec(ptmp);
+		double cur_minor=vv.eigenvalue_[0];
+		if(cur_minor<0.99*total_minor){
+			cloud->points[i].r=255;
+			cloud->points[i].g=0;
+			cloud->points[i].b=0;
+		}		
+	}
+	pcl::io::savePLYFileBinary("Result/patch.ply",*cloud);
+}
+
+int main(int argc,char** argv)
+{
+	pcl::PointCloud<PointType>::Ptr cloud(new pcl::PointCloud<PointType>);	
+	if (pcl::io::loadPLYFile<PointType>(argv[1], *cloud) == -1){
+		PCL_ERROR("Couldn't read file test_pcd.pcd \n");
+		return (-1);
+	}
+
+	PointSetFeatures psf(cloud);
+	// psf.DetectUntrust(psf.cloud_);
+	// psf.ApplyMahalanobis(psf.cloud_);
+	// psf.ApplyStandardizedEuclideanDistance(psf.cloud_);
+	// psf.ApplyStandardDistance(psf.cloud_);
+
+	/*******************************************************
+	 * 			Standardized Euclidean Distance 
+	 * *****************************************************/
+	// psf.ApplyStandardizedEuclideanDistance(cloud,40);
+	// psf.rst_StandardizedEuclideanDistance_.EnableActive();
+	// psf.rst_StandardizedEuclideanDistance_.GetBoxplot(20.0);
+	// psf.rst_StandardizedEuclideanDistance_.Write("Result/SED1.csv");
+	// psf.Write("Result/SED1.ply",psf.cloud_);
+	// psf.rst_StandardizedEuclideanDistance_.DisableActive();	
+	// psf.rst_StandardizedEuclideanDistance_.Write("Result/SED0.csv");
+	
+
+	/*******************************************************
+	 * 				Data Mining
+	 * *****************************************************/
+	// DataMining dm(cloud);
+	// dm.LOOP();
+	// dm.rst_.Write("Result/dm.csv");
+
+	/*******************************************************
+	 * 				Centroid And Centre
+	 * *****************************************************/
+	// psf.ApplyCentroidAndCentre(psf.cloud_);
+	// psf.rst_CentroidAndCentre_.EnableActive();
+	// psf.Write("Result/CAC.ply",psf.cloud_);
+	// psf.rst_CentroidAndCentre_.Write("Result/CAC.csv");
+	// psf.rst_CentroidAndCentre_.Standardize_Zscore();
+	// psf.rst_CentroidAndCentre_.Write("Result/CAC0.csv");
+	// psf.Write("Result/newCAC.ply",cloud);
+	// psf.rst_CentroidAndCentre_.DisableActive();
+	// psf.rst_CentroidAndCentre_.Write("Result/CAC1.csv");
+
+	/************************************************
+	 * 				Knn Plane (available) 
+	 * **********************************************/
+	psf.ApplyKnnPlane(cloud,30);
+	// psf.Write("Result/KnnPlane1.ply",psf.cloud_);
+
+	/*******************************************************
+	 * 				Minor Eigenvalue (available)
+	 * *****************************************************/
+	// psf.ApplyMinorEigenvalue(psf.cloud_,30);
+	// psf.rst_MinorEigenvalue_.Standardize_Zscore();	
+	// psf.rst_MinorEigenvalue_.Normalize_Tanh();	
+	// psf.Write("Result/MinorPlane/MinorPlane.ply",psf.cloud_);
+
+	/********************************************************
+	 *				 Knn Plane Projection
+	********************************************************/
+	// psf.ApplyKnnPlaneProjection(cloud,35);
+	// psf.rst_KnnPlaneProjection_.Normalize_Min_Max();
+	// psf.rst_KnnPlaneProjection_.Standardize_Zscore();
+	// psf.rst_KnnPlaneProjection_.LocalFilter(cloud,10);
+	// psf.rst_KnnPlaneProjection_.Normalize_Tanh(0.1);
+	// psf.rst_KnnPlaneProjection_.GetNormalDistributionError();
+	// psf.rst_KnnPlaneProjection_.Write("Result/KnnPlaneProjection.csv");
+
+
+	/********************************************************
+	 *						Density
+	********************************************************/
+	psf.ApplyDensity(cloud,5);
+
+	psf.Write("Result/Blending.ply",psf.cloud_);
+	
+
+	/*********************************************************************************
+	 *  							Improved Loop
+	*********************************************************************************/
+	// ImprovedLoop IL;
+	// IL.Init(cloud);
+	// IL.ILoop(10,0.8);
+
+	/*********************************************************************************
+	 *  							Other Ideas
+	*********************************************************************************/
+	// IL.StatisticCentreAndCentroid(cloud);
+	// IL.StatisticMinorMajorRatio(cloud);
+	// IL.EdgeDetection();
+	// EntropyWithKDE(cloud);
+
+	/*********************************************************************************
+	 *  							Edge Detection
+	*********************************************************************************/
+	// DetectHoleEdge02_Radius(cloud);
+	// DetectHoleEdge03_kNN(cloud);
+	// DetectHoleEdge03_Radius(cloud);  //*	
+
+	/*********************************************************************************
+	 *  							   Viewer
+	*********************************************************************************/
+	// boost::shared_ptr<pcl::visualization::PCLVisualizer> viewer(new pcl::visualization::PCLVisualizer ("3D Viewer")); 
+	// // Set background
+	// viewer->setBackgroundColor (1.0f, 1.0f, 1.0f);
+	// //Set multi-color for point cloud
+	// pcl::visualization::PointCloudColorHandlerRGBField<PointType> multi_color(cloud);	
+	// //Add the demostration point cloud data
+	// viewer->addPointCloud<PointType> (cloud, multi_color, "cloud1");
+	// viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 4, "cloud1");
+	// while(!viewer->wasStopped()){	
+	// 	viewer->spin();
+	// 	boost::this_thread::sleep (boost::posix_time::microseconds (10));
+	// }
+	return 0;
+}
