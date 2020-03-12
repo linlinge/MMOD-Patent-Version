@@ -40,17 +40,17 @@ void Table::GetMeanAndVariance(int item_index)
         else if(flag_is_active_==1){
             double sum=0;
             // calculate average
-            for(int i=0;i<active_idx_.size();i++){
-                sum+=records_[active_idx_[i]].item1_;
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                sum+=records_[unbelievable_idx_[i]].item1_;
             }
-            mean_=sum/active_idx_.size();
+            mean_=sum/unbelievable_idx_.size();
 
             // calculate variance
             sum=0;
-            for(int i=0;i<active_idx_.size();i++){
-                sum+=pow(records_[active_idx_[i]].item1_-mean_,2);
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                sum+=pow(records_[unbelievable_idx_[i]].item1_-mean_,2);
             }
-            sigma_=sqrt(sum/(active_idx_.size()-1));
+            sigma_=sqrt(sum/(unbelievable_idx_.size()-1));
         }
         else 
             cout<<"Error 01: active mode error!"<<endl;
@@ -72,9 +72,9 @@ void Table::GetMinimumAndMaximum(int item_index)
         else if(flag_is_active_==1){
             min_=INT_MAX;
             max_=-INT_MAX;
-            for(int i=0;i<active_idx_.size();i++){
-                min_=min_<records_[active_idx_[i]].item1_ ? min_:records_[active_idx_[i]].item1_;
-                max_=max_>records_[active_idx_[i]].item1_ ? max_:records_[active_idx_[i]].item1_;
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                min_=min_<records_[unbelievable_idx_[i]].item1_ ? min_:records_[unbelievable_idx_[i]].item1_;
+                max_=max_>records_[unbelievable_idx_[i]].item1_ ? max_:records_[unbelievable_idx_[i]].item1_;
             }
         }
         else
@@ -87,7 +87,7 @@ void Table::Standardize_Zscore(int item_index)
     if(1==item_index){
         if(flag_is_active_==0){
             GetMeanAndVariance();
-            // #pragma omp parallel for
+            #pragma omp parallel for
             for(int i=0;i<records_.size();i++){
                 records_[i].item1_=(records_[i].item1_-mean_)/sigma_;
             }
@@ -95,8 +95,8 @@ void Table::Standardize_Zscore(int item_index)
         else if(flag_is_active_==1){
             GetMeanAndVariance();
             #pragma omp parallel for
-            for(int i=0;i<active_idx_.size();i++){
-                records_[active_idx_[i]].item1_=(records_[active_idx_[i]].item1_-mean_)/sigma_;
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                records_[unbelievable_idx_[i]].item1_=(records_[unbelievable_idx_[i]].item1_-mean_)/sigma_;
             }
         }
         else
@@ -116,8 +116,8 @@ void Table::Normalize_Min_Max(int item_index)
         else if(flag_is_active_==1){
             GetMinimumAndMaximum();
             #pragma omp parallel for
-            for(int i=0;i<active_idx_.size();i++)
-                records_[active_idx_[i]].item1_=(records_[active_idx_[i]].item1_-min_)/(max_-min_); 
+            for(int i=0;i<unbelievable_idx_.size();i++)
+                records_[unbelievable_idx_[i]].item1_=(records_[unbelievable_idx_[i]].item1_-min_)/(max_-min_); 
         }
         else
             cout<<"Error 04: Normalize min max error!"<<endl;
@@ -129,14 +129,18 @@ void Table::Normalize_Tanh(double scale,int item_index)
     if(1==item_index){        
         if(flag_is_active_==0){
             GetMeanAndVariance();
+
+            #pragma omp parallel for
             for(int i=0;i<records_.size();i++){
                 records_[i].item1_=tanh(scale*records_[i].item1_);
             }    
         }
         else if(flag_is_active_==1){
             GetMeanAndVariance();
-            for(int i=0;i<active_idx_.size();i++){
-                records_[active_idx_[i]].item1_=tanh(scale*records_[active_idx_[i]].item1_);
+
+            #pragma omp parallel for
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                records_[unbelievable_idx_[i]].item1_=tanh(scale*records_[unbelievable_idx_[i]].item1_);
             }
         }
         else
@@ -166,8 +170,8 @@ void Table::Write(string path)
     }
     else if(flag_is_active_==1){
         GetBoxplot();
-        for(int i=0;i<active_idx_.size();i++){
-            fout<<records_[active_idx_[i]].item1_<<endl;
+        for(int i=0;i<unbelievable_idx_.size();i++){
+            fout<<records_[unbelievable_idx_[i]].item1_<<endl;
         }
     }
     fout.close();
@@ -250,6 +254,29 @@ void Table::LocalFilter(pcl::PointCloud<PointType>::Ptr cloud,int K)
 
     for(int i=0;i<cloud->points.size();i++){
         records_[i].item1_=lf[i];
+    }
+}
+
+void Table::GetHistogram(int k)
+{
+    records_hist_.resize(k);
+    for(int i=0;i<records_.size();i++){
+        records_hist_[records_[i].item1_]+=1;
+    }
+}
+void Table::GaussianOutlier(int k)
+{
+    GetMeanAndVariance();
+    double lower_thresh=max((double)0.0,mean_-k*sigma_);
+    double upper_thresh=mean_+2*sigma_;
+    for(int i=0;i<records_.size();i++){
+        if(records_[i].item1_<=lower_thresh){
+            unbelievable_idx_.push_back(records_[i].id_);
+        }
+
+        if(records_[i].item1_>=upper_thresh){
+            believable_idx_.push_back(records_[i].id_);
+        }
     }
 }
 
@@ -341,15 +368,15 @@ void Table::GetBoxplot(double lamda, int item_index)
     // Get all inactive index
     for(int i=0;i<records_.size();i++){
         if(records_[i].item1_< lower_inner_limit_){
-            lower_inactive_idx_.push_back(i);
-            inactive_idx_.push_back(i);
+            lower_unbelievable_idx_.push_back(i);
+            unbelievable_idx_.push_back(i);
         }
         else if(records_[i].item1_ > upper_inner_limit_){
-            upper_inactive_idx_.push_back(i);
-            inactive_idx_.push_back(i);
+            upper_unbelievable_idx_.push_back(i);
+            unbelievable_idx_.push_back(i);
         }
         else{
-            active_idx_.push_back(i);
+            believable_idx_.push_back(i);
         }
     }
 }
@@ -377,24 +404,24 @@ void Table::GetCorrespondingColor(int item_index)
             GetMinimumAndMaximum();
 
             // Lower inactive value
-            for(int i=0;i<lower_inactive_idx_.size();i++){
-                int itmp=lower_inactive_idx_[i];
+            for(int i=0;i<lower_unbelievable_idx_.size();i++){
+                int itmp=lower_unbelievable_idx_[i];
                 color_[itmp].r=0;
                 color_[itmp].g=0;
                 color_[itmp].b=255;
             }
 
             // Upper inactive value
-            for(int i=0;i<upper_inactive_idx_.size();i++){
-                int itmp=upper_inactive_idx_[i];
+            for(int i=0;i<upper_unbelievable_idx_.size();i++){
+                int itmp=upper_unbelievable_idx_[i];
                 color_[itmp].r=255;
                 color_[itmp].g=0;
                 color_[itmp].b=0;
             }
 
             // 
-            for(int i=0;i<active_idx_.size();i++){
-                int itmp=active_idx_[i];
+            for(int i=0;i<unbelievable_idx_.size();i++){
+                int itmp=unbelievable_idx_[i];
                 V3 ctmp=get_color(min_,max_,records_[itmp].item1_);                  
                 color_[itmp].r=ctmp.r;
                 color_[itmp].g=ctmp.g;
@@ -422,3 +449,70 @@ void Table::GetCorrespondingColor(int item_index)
         }
     }
 }
+
+void Table::nPLOF(pcl::PointCloud<PointType>::Ptr cloud,int K)
+{
+    pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+    kdtree->setInputCloud(cloud);
+    
+    vector<double> plof;    
+    plof.resize(cloud->points.size());
+	// #pragma omp parallel for
+	for (int i = 0; i < cloud->points.size(); i++){        
+        vector<int> idx(K+1);
+		vector<float> dist(K+1);
+		kdtree->nearestKSearch (cloud->points[i], K+1, idx, dist);
+        double sum = 0;
+        for (int j = 1; j < K+1; j++)
+          sum += records_[idx[j]].item1_;
+        sum /= K;
+        plof[i] = records_[i].item1_ / sum  - 1.0f;
+    }
+
+    for(int i=0;i<cloud->points.size();i++){
+        records_[i].item1_=plof[i];
+    }
+}
+
+// blue -> green -> yellow -> red
+void Table::SetActiveIndex(string erea_color, string status)
+{
+    GetMinimumAndMaximum();
+    double n=4.0;
+    double step=(max_-min_)/n;
+    double Q1=min_+step;
+    double Q2=min_+2*step;
+    double Q3=min_+3*step;
+    if(erea_color=="1000" && status == "believable"){
+        for(int i=0;i<records_.size();i++){
+            if(records_[i].item1_<=Q1){
+                believable_idx_.push_back(i);
+            }
+            else{
+                unbelievable_idx_.push_back(i);
+            }
+        }
+    }
+    else if(erea_color=="1100" && status == "believable"){
+        for(int i=0;i<records_.size();i++){
+            if(records_[i].item1_<=Q2){
+                believable_idx_.push_back(i);
+            }
+            else{
+                unbelievable_idx_.push_back(i);
+            }
+        }
+    }
+    else if(erea_color=="1110" && status == "believable"){
+        for(int i=0;i<records_.size();i++){
+            if(records_[i].item1_<=Q3){
+                believable_idx_.push_back(i);
+            }
+            else{
+                unbelievable_idx_.push_back(i);
+            }
+        }
+    }
+     
+}
+

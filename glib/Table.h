@@ -25,14 +25,19 @@ class Table
 	public:
 		vector<Rrd> records_;
 		vector<Rrd> records_sorted_;
+		vector<int> records_hist_;
 		double mean_,sigma_;		
 		double min_=INT_MAX;
 		double max_=-INT_MAX;
-		vector<int> active_idx_;
-		vector<int> inactive_idx_;
-		vector<int> lower_inactive_idx_;
-		vector<int> upper_inactive_idx_;
+
+		// use on hierarchical method
+		vector<int> believable_idx_;	// believable area index for upper level
+		vector<int> unbelievable_idx_;	// unbelivable area index for upper level
+		vector<int> lower_unbelievable_idx_;	// index for outlier below lower bound
+		vector<int> upper_unbelievable_idx_;	// index for outlier greater than upper bound
+
 		vector<V3> color_;
+		
 
 		double Q1_,Q3_;
 		double median_;	
@@ -76,4 +81,11 @@ class Table
 		//
 		void LocalFilter(pcl::PointCloud<PointType>::Ptr cloud,int K);
 		void GetCorrespondingColor(int item_index=1);
+		//
+		void GetHistogram(int k=30);
+		void GaussianOutlier(int k=1);
+
+		void nPLOF(pcl::PointCloud<PointType>::Ptr cloud,int K);
+		void SetActiveIndex(string erea_color, string status);
+		
 };

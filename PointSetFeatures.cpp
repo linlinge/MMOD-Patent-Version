@@ -98,7 +98,7 @@ double Feature::Poly33(pcl::PointCloud<PointType>::Ptr cloud)
     return denominator/numerator;
 }
 
-int Feature::KnnPlaneCounter(pcl::PointCloud<PointType>::Ptr cloud)
+int Feature::ThinPlaneCounter(pcl::PointCloud<PointType>::Ptr cloud)
 {
     vector<V3> arrows;
     for(int j=1;j<cloud->points.size();j++){
@@ -119,7 +119,29 @@ int Feature::KnnPlaneCounter(pcl::PointCloud<PointType>::Ptr cloud)
     return count;
 }
 
-double Feature::KnnPlaneProjector(pcl::PointCloud<PointType>::Ptr cloud)
+double Feature::ThinPlaneAngle(pcl::PointCloud<PointType>::Ptr cloud)
+{
+    vector<V3> arrows;
+    for(int j=1;j<cloud->points.size();j++){
+        if(j!=0){
+            arrows.push_back(V3(cloud->points[j].x-cloud->points[0].x,
+                                cloud->points[j].y-cloud->points[0].y,
+                                cloud->points[j].z-cloud->points[0].z));
+        }
+    }
+    EvalAndEvec vv(cloud);
+    V3 ntmp(vv.eigenvector_[0].x,vv.eigenvector_[0].y,vv.eigenvector_[0].z);
+    double sum=0;
+    for(int j=0;j<arrows.size();j++){
+        double cosval=abs(Dot(arrows[j],ntmp)/ntmp.GetLength()/arrows[j].GetLength());
+        if(cosval<=1.0f)
+            sum+=acos(cosval);
+    }
+    return sum/arrows.size();
+}
+
+
+double Feature::ThinPlaneProjector(pcl::PointCloud<PointType>::Ptr cloud)
 {
     vector<V3> arrows;
     for(int j=1;j<cloud->points.size();j++){
@@ -136,14 +158,6 @@ double Feature::KnnPlaneProjector(pcl::PointCloud<PointType>::Ptr cloud)
         Prj+=Dot(arrows[j],ntmp)/ntmp.GetLength();
     }
     return Prj;
-}
-
-PointSetFeatures::PointSetFeatures(pcl::PointCloud<PointType>::Ptr cloud)
-{
-    cloud_=cloud;
-    cloud_trusted_=pcl::PointCloud<PointType>::Ptr(new pcl::PointCloud<PointType>());
-    cloud_untrusted_=pcl::PointCloud<PointType>::Ptr(new pcl::PointCloud<PointType>());
-    rst_.Resize(cloud->points.size());
 }
 
 void PointSetFeatures::ApplyMinorEigenvalue(pcl::PointCloud<PointType>::Ptr cloud, int K)
@@ -191,8 +205,8 @@ void PointSetFeatures::ApplyEigenvalueRatio(pcl::PointCloud<PointType>::Ptr clou
 		EvalAndEvec vv;
         vv.GetEvalAndEvec(ptmp_5);
         vv.GetEvalAndEvec(ptmp_k);		
-		rst_.records_[i].id_=i;
-		rst_.records_[i].item1_=vv.eigenvalue_[1]/vv.eigenvalue_[2];
+		rst_EigenvalueRatio_.records_[i].id_=i;
+		rst_EigenvalueRatio_.records_[i].item1_=vv.eigenvalue_[1]/vv.eigenvalue_[2];
 	}
 }
 
@@ -212,14 +226,14 @@ void PointSetFeatures::ApplyQuadricSurfaceFitting(pcl::PointCloud<PointType>::Pt
         }
 
         Feature f;
-        rst_.records_[i].id_=i;
-        rst_.records_[i].item1_=f.Poly33(ctmp);
+        rst_QuadricSurfaceFitting_.records_[i].id_=i;
+        rst_QuadricSurfaceFitting_.records_[i].item1_=f.Poly33(ctmp);
     }
 }
 
-void PointSetFeatures::knnNormaAngle(pcl::PointCloud<PointType>::Ptr cloud)
+void PointSetFeatures::knnNormalAngle(pcl::PointCloud<PointType>::Ptr cloud)
 {
-    rst_.Resize(cloud->points.size());
+    rst_knnNormalAngle_.Resize(cloud->points.size());
     int K=7;    
     pcl::search::KdTree<PointType>::Ptr kdtree (new pcl::search::KdTree<PointType>());
     kdtree->setInputCloud(cloud);
@@ -233,17 +247,17 @@ void PointSetFeatures::knnNormaAngle(pcl::PointCloud<PointType>::Ptr cloud)
             ctmp->points.push_back(cloud->points[idx[j]]);
         }
         Feature fna;
-        rst_.records_[i].id_=i;
-        rst_.records_[i].item1_=fna.GetNormalAngle(ctmp);
+        rst_knnNormalAngle_.records_[i].id_=i;
+        rst_knnNormalAngle_.records_[i].item1_=fna.GetNormalAngle(ctmp);
     }
     ofstream fout("Result/0.csv");
-    for(int i=0;i<rst_.Rows();i++){
-        fout<<rst_.records_[i].item1_<<endl;
+    for(int i=0;i<rst_knnNormalAngle_.Rows();i++){
+        fout<<rst_knnNormalAngle_.records_[i].item1_<<endl;
     }
     fout.close();
 
     for(int i=0;i<cloud->points.size();i++){
-        if(rst_.records_[i].item1_>1.4){
+        if(rst_knnNormalAngle_.records_[i].item1_>1.4){
             cloud->points[i].r=255;
             cloud->points[i].g=0;
             cloud->points[i].b=0;
@@ -252,52 +266,11 @@ void PointSetFeatures::knnNormaAngle(pcl::PointCloud<PointType>::Ptr cloud)
     pcl::io::savePLYFileBinary("Result/knnNormaAngle.ply",*cloud);
 }
 
-void PointSetFeatures::ApplyPLOF(int K)
+void PointSetFeatures::ApplyLoop(pcl::PointCloud<PointType>::Ptr cloud,int K)
 {
-    PLOF_.resize(cloud_->points.size());
-    pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
-    kdtree->setInputCloud(cloud_);    
-    #pragma omp parallel for
-    for(int i=0;i<cloud_->points.size();i++){
-        vector<int> idx(K+1);
-        vector<float> dist(K+1);        
-        kdtree->nearestKSearch(cloud_->points[i], K+1, idx, dist);
-        double sum=0;
-        for(int j=1;j<K+1;j++){
-            sum+=rst_StandardizedEuclideanDistance_.records_[idx[j]].item1_;
-        }
-        sum/=K;
-        PLOF_[i]=rst_StandardizedEuclideanDistance_.records_[i].item1_/sum-1.0f;
-    }
-
-    for(int i=0;i<cloud_->points.size();i++){
-        rst_StandardizedEuclideanDistance_.records_[i].item1_=PLOF_[i];
-    }
-}
-
-void PointSetFeatures::ApplynPLOF()
-{    
-    double nPLOF=0;
-    for(int i=0;i<cloud_->points.size();i++){
-        nPLOF+=PLOF_[i]*PLOF_[i];
-    }
-    nPLOF=sqrt(nPLOF/cloud_->points.size());
-    nPLOF=1.0;
-
-    for(int i=0;i<cloud_->points.size();i++){
-        double value = PLOF_[i]/(nPLOF*sqrt(2.0));
-        double dem = 1.0 + 0.278393 * value;
-        dem += 0.230389 * value * value;
-        dem += 0.000972 * value * value * value;
-        dem += 0.078108 * value * value * value * value;
-        rst_StandardizedEuclideanDistance_.records_[i].item1_ = std::max(0.0, 1.0 - 1.0 / dem);
-    }
-}
-
-void PointSetFeatures::ApplyStandardizedEuclideanDistance(pcl::PointCloud<PointType>::Ptr cloud,int K)
-{
-    flag_StandardizedEuclideanDistance_=1;
-    rst_StandardizedEuclideanDistance_.Resize(cloud->points.size());
+    // Step01: Standardized Euclidean Distance
+    flag_Loop_=1;
+    rst_Loop_.Resize(cloud->points.size());
     pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
     kdtree->setInputCloud(cloud);
     for(int i=0;i<cloud->points.size();i++){
@@ -310,11 +283,45 @@ void PointSetFeatures::ApplyStandardizedEuclideanDistance(pcl::PointCloud<PointT
             sum+=dist[j];
         }
         sum=sqrt(sum/K);
-        rst_StandardizedEuclideanDistance_.records_[i].id_=i;
-        rst_StandardizedEuclideanDistance_.records_[i].item1_=sum;
+        rst_Loop_.records_[i].id_=i;
+        rst_Loop_.records_[i].item1_=sum;
     }
-    ApplyPLOF(K);
-    ApplynPLOF();
+
+    // Step02: PLOF
+    PLOF_.resize(cloud->points.size());
+    kdtree->setInputCloud(cloud);    
+    #pragma omp parallel for
+    for(int i=0;i<cloud->points.size();i++){
+        vector<int> idx(K+1);
+        vector<float> dist(K+1);        
+        kdtree->nearestKSearch(cloud->points[i], K+1, idx, dist);
+        double sum=0;
+        for(int j=1;j<K+1;j++){
+            sum+=rst_Loop_.records_[idx[j]].item1_;
+        }
+        sum/=K;
+        PLOF_[i]=rst_Loop_.records_[i].item1_/sum-1.0f;
+    }
+
+    for(int i=0;i<cloud->points.size();i++){
+        rst_Loop_.records_[i].item1_=PLOF_[i];
+    }
+
+    // Step03: nPLOF
+    // double nPLOF=0;
+    // for(int i=0;i<cloud_->points.size();i++){
+    //     nPLOF+=PLOF_[i]*PLOF_[i];
+    // }
+    // nPLOF=sqrt(nPLOF/cloud_->points.size());
+
+    // for(int i=0;i<cloud_->points.size();i++){
+    //     double value = PLOF_[i]/(nPLOF*sqrt(2.0));
+    //     double dem = 1.0 + 0.278393 * value;
+    //     dem += 0.230389 * value * value;
+    //     dem += 0.000972 * value * value * value;
+    //     dem += 0.078108 * value * value * value * value;
+    //     rst_Loop_.records_[i].item1_ = std::max(0.0, 1.0 - 1.0 / dem);
+    // }
 }
 
 void PointSetFeatures::ApplyMahalanobis(pcl::PointCloud<PointType>::Ptr cloud)
@@ -340,8 +347,8 @@ void PointSetFeatures::ApplyMahalanobis(pcl::PointCloud<PointType>::Ptr cloud)
         }
         Feature f;
         f.ComputeMahalanobisDistance(v,ctmp);
-        rst_.records_[i].id_=i;
-        rst_.records_[i].item1_=f.Mdist_(0,0);
+        rst_Mahalanobis_.records_[i].id_=i;
+        rst_Mahalanobis_.records_[i].item1_=f.Mdist_(0,0);
     }
 }
 
@@ -373,42 +380,71 @@ void PointSetFeatures::ApplyStandardDistance(pcl::PointCloud<PointType>::Ptr clo
             sd+=pow(cloud->points[idx[j]].x-x_bar,2)+pow(cloud->points[idx[j]].y-y_bar,2)+pow(cloud->points[idx[j]].z-z_bar,2);
         }
         sd=sqrt(sd/K);
-        rst_.records_[i].id_=i;
-        rst_.records_[i].item1_=sd;
+        rst_StandardDistance_.records_[i].id_=i;
+        rst_StandardDistance_.records_[i].item1_=sd;
     }
 }
 
 
 void PointSetFeatures::Write(string path,pcl::PointCloud<PointType>::Ptr cloud)
 {
-    if(flag_MinorEigenvalue_==1 && flag_KnnPlane_==1){
+    if(flag_MinorEigenvalue_==1 && flag_ThinPlaneCounter_==1){
         rst_MinorEigenvalue_.Normalize_Min_Max();
-        rst_KnnPlane_cnt_.Normalize_Min_Max();
-        for(int i=0;i<cloud_->points.size();i++){
-            rst_.records_[i].item1_=rst_MinorEigenvalue_.records_[i].item1_*rst_KnnPlane_cnt_.records_[i].item1_;
+        rst_ThinPlaneCounter_.Normalize_Min_Max();
+        for(int i=0;i<cloud->points.size();i++){
+            // rst_.records_[i].item1_=rst_MinorEigenvalue_.records_[i].item1_*rst_ThinPlaneCounter_.records_[i].item1_;
         }
     }
-    else if(flag_density_==1 && flag_KnnPlane_==1){
+    else if(flag_density_==1 && flag_ThinPlaneCounter_==1){
+
+        vector<int> outlier_idx;
         // density outer
-        // rst_density_.GetBoxplot(15.0);
-        // rst_density_.GetBoxplot(5.0);
-        // for(int i=0;i<rst_density_.inactive_idx_.size();i++){
-        //     int itmp=rst_density_.inactive_idx_[i];
+        // rst_density_.GetBoxplot(2.0);
+        // for(int i=0;i<rst_density_.lower_outlier_idx_.size();i++){
+        //     int itmp=rst_density_.lower_outlier_idx_[i];
         //     cloud->points[itmp].r=255;
         //     cloud->points[itmp].g=0;
         //     cloud->points[itmp].b=0;
+        //     outlier_idx.push_back(itmp);
         // }
 
-        // knn plane outer
-        rst_KnnPlane_cnt_.GetBoxplot();
-        for(int i=0;i<rst_KnnPlane_cnt_.inactive_idx_.size();i++){
-            int itmp=rst_KnnPlane_cnt_.inactive_idx_[i];
+        // thin plane outer
+        rst_ThinPlaneCounter_.GetBoxplot(1.0);
+        for(int i=0;i<rst_ThinPlaneCounter_.lower_unbelievable_idx_.size();i++){
+            int itmp=rst_ThinPlaneCounter_.lower_unbelievable_idx_[i];
+            // cloud->points[itmp].r=255;
+            // cloud->points[itmp].g=0;
+            // cloud->points[itmp].b=0;
+            outlier_idx.push_back(itmp);
+        }
+
+        sort(outlier_idx.begin(),outlier_idx.end());
+        vector<int>::iterator iter = unique(outlier_idx.begin(),outlier_idx.end());
+        outlier_idx.erase(iter,outlier_idx.end());
+
+        //
+        pcl::PointCloud<PointType>::Ptr presult(new pcl::PointCloud<PointType>);
+        int k=0;
+        for(int i=0;i<cloud->points.size();i++){
+            if(i!=outlier_idx[k]){
+                presult->points.push_back(cloud->points[i]);
+            }
+            else{
+                k++;
+            }
+        }
+
+        pcl::io::savePLYFileBinary(path,*presult);
+    }
+    else if(flag_slope_==1){        
+        rst_pulse_.GetBoxplot(20.0);
+        for(int i=0;i<rst_pulse_.upper_unbelievable_idx_.size();i++){
+            int itmp=rst_pulse_.upper_unbelievable_idx_[i];
             cloud->points[itmp].r=255;
             cloud->points[itmp].g=0;
             cloud->points[itmp].b=0;
         }
-
-        pcl::io::savePLYFileBinary(path,*cloud);
+        pcl::io::savePLYFileBinary("Result/1.ply",*cloud);
     }
     else if(flag_MinorEigenvalue_==1){
         rst_MinorEigenvalue_.GetCorrespondingColor();
@@ -419,22 +455,39 @@ void PointSetFeatures::Write(string path,pcl::PointCloud<PointType>::Ptr cloud)
         }
         pcl::io::savePLYFileBinary(path,*cloud);
     }
-    else if(flag_KnnPlane_==1){
-        rst_KnnPlane_cnt_.GetCorrespondingColor();
-        for(int i=0;i<rst_KnnPlane_cnt_.color_.size();i++){
-            cloud->points[i].r=rst_KnnPlane_cnt_.color_[i].r;
-            cloud->points[i].g=rst_KnnPlane_cnt_.color_[i].g;
-            cloud->points[i].b=rst_KnnPlane_cnt_.color_[i].b;
-        }
+    else if(flag_ThinPlaneCounter_==1){
+        // rst_ThinPlaneCounter_.GetCorrespondingColor();
+        // for(int i=0;i<rst_ThinPlaneCounter_.color_.size();i++){
+        //     cloud->points[i].r=rst_ThinPlaneCounter_.color_[i].r;
+        //     cloud->points[i].g=rst_ThinPlaneCounter_.color_[i].g;
+        //     cloud->points[i].b=rst_ThinPlaneCounter_.color_[i].b;
+        // }
+
+        for(int i=0;i<rst_ThinPlaneCounter_.records_.size();i++){
+            if(rst_ThinPlaneCounter_.records_[i].item1_==0){
+                cloud->points[i].r=255;
+                cloud->points[i].g=0;
+                cloud->points[i].b=0;
+            }
+        }  
 
         // rst_KnnPlane_cnt_.GetBoxplot(25);
         pcl::io::savePLYFileBinary(path,*cloud);
     }
-    else if(flag_KnnPlaneProjection_==1)
+    else if(flag_ThinPlaneAngle_==1){
+        rst_ThinPlaneAngle_.GetCorrespondingColor();
+        for(int i=0;i<rst_ThinPlaneAngle_.color_.size();i++){
+            cloud->points[i].r=rst_ThinPlaneAngle_.color_[i].r;
+            cloud->points[i].g=rst_ThinPlaneAngle_.color_[i].g;
+            cloud->points[i].b=rst_ThinPlaneAngle_.color_[i].b;
+        }
+        pcl::io::savePLYFileBinary(path,*cloud);
+    }
+    else if(flag_ThinPlaneProjection_==1)
     {
-        rst_KnnPlaneProjection_.Normalize_Min_Max();
-        for(int i=0;i<cloud_->points.size();i++){
-            rst_.records_[i].item1_=rst_KnnPlaneProjection_.records_[i].item1_;
+        rst_ThinPlaneProjection_.Normalize_Min_Max();
+        for(int i=0;i<cloud->points.size();i++){
+            rst_ThinPlaneAngle_.records_[i].item1_=rst_ThinPlaneProjection_.records_[i].item1_;
         }
     }
     else if(flag_CentroidAndCentre_==1){        
@@ -443,23 +496,23 @@ void PointSetFeatures::Write(string path,pcl::PointCloud<PointType>::Ptr cloud)
         rst_CentroidAndCentre_.EnableActive();
 
         // 
-        for(int i=0;i<rst_CentroidAndCentre_.lower_inactive_idx_.size();i++){
-            int itmp=rst_CentroidAndCentre_.lower_inactive_idx_[i];
+        for(int i=0;i<rst_CentroidAndCentre_.lower_unbelievable_idx_.size();i++){
+            int itmp=rst_CentroidAndCentre_.lower_unbelievable_idx_[i];
             cloud->points[itmp].r=0;
             cloud->points[itmp].g=0;
             cloud->points[itmp].b=255;
         }
 
-        for(int i=0;i<rst_CentroidAndCentre_.upper_inactive_idx_.size();i++){
-            int itmp=rst_CentroidAndCentre_.upper_inactive_idx_[i];
+        for(int i=0;i<rst_CentroidAndCentre_.upper_unbelievable_idx_.size();i++){
+            int itmp=rst_CentroidAndCentre_.upper_unbelievable_idx_[i];
             cloud->points[itmp].r=255;
             cloud->points[itmp].g=0;
             cloud->points[itmp].b=0;
         }
 
         rst_CentroidAndCentre_.GetMinimumAndMaximum();
-        for(int i=0;i<rst_CentroidAndCentre_.active_idx_.size();i++){
-            int itmp=rst_CentroidAndCentre_.active_idx_[i];
+        for(int i=0;i<rst_CentroidAndCentre_.unbelievable_idx_.size();i++){
+            int itmp=rst_CentroidAndCentre_.unbelievable_idx_[i];
             V3 ctmp=get_color(rst_CentroidAndCentre_.min_,rst_CentroidAndCentre_.max_,rst_CentroidAndCentre_.records_[itmp].item1_);
             cloud->points[itmp].r=ctmp.r;
             cloud->points[itmp].g=ctmp.g;
@@ -468,12 +521,12 @@ void PointSetFeatures::Write(string path,pcl::PointCloud<PointType>::Ptr cloud)
         pcl::io::savePLYFileBinary(path,*cloud);
         rst_CentroidAndCentre_.DisableActive();
     }
-    else if(flag_StandardizedEuclideanDistance_==1){       
-        rst_StandardizedEuclideanDistance_.GetCorrespondingColor();
-        for(int i=0;i<rst_StandardizedEuclideanDistance_.color_.size();i++){
-            cloud->points[i].r=rst_StandardizedEuclideanDistance_.color_[i].r;
-            cloud->points[i].g=rst_StandardizedEuclideanDistance_.color_[i].g;
-            cloud->points[i].b=rst_StandardizedEuclideanDistance_.color_[i].b;
+    else if(flag_Loop_==1){       
+        rst_Loop_.GetCorrespondingColor();
+        for(int i=0;i<rst_Loop_.color_.size();i++){
+            cloud->points[i].r=rst_Loop_.color_[i].r;
+            cloud->points[i].g=rst_Loop_.color_[i].g;
+            cloud->points[i].b=rst_Loop_.color_[i].b;
         }
         pcl::io::savePLYFileBinary(path,*cloud);
     }
@@ -488,10 +541,13 @@ void PointSetFeatures::Write(string path,pcl::PointCloud<PointType>::Ptr cloud)
     }    
 }
 
-void PointSetFeatures::ApplyKnnPlane(pcl::PointCloud<PointType>::Ptr cloud,int K)
+/*
+        thin plane: counter
+*/
+void PointSetFeatures::ApplyThinPlaneCounter(pcl::PointCloud<PointType>::Ptr cloud,int K)
 {
-    flag_KnnPlane_=1;
-    rst_KnnPlane_cnt_.Resize(cloud->points.size());
+    flag_ThinPlaneCounter_=1;
+    rst_ThinPlaneCounter_.Resize(cloud->points.size());
     pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
     kdtree->setInputCloud(cloud);
 
@@ -507,9 +563,36 @@ void PointSetFeatures::ApplyKnnPlane(pcl::PointCloud<PointType>::Ptr cloud,int K
         }        
 
         Feature f;
-        int cnt=f.KnnPlaneCounter(ctmp);
-        rst_KnnPlane_cnt_.records_[i].id_=i;
-        rst_KnnPlane_cnt_.records_[i].item1_=cnt;
+        int cnt=f.ThinPlaneCounter(ctmp);
+        rst_ThinPlaneCounter_.records_[i].id_=i;
+        rst_ThinPlaneCounter_.records_[i].item1_=cnt;
+    }
+}
+/*
+        think plane: angle
+*/
+void PointSetFeatures::ApplyThinPlaneAngle(pcl::PointCloud<PointType>::Ptr cloud,int K)
+{
+    flag_ThinPlaneAngle_=1;
+    rst_ThinPlaneAngle_.Resize(cloud->points.size());
+    pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+    kdtree->setInputCloud(cloud);
+    double tmptmp;
+
+    // #pragma omp parallel for
+    for(int i=0;i<cloud->points.size();i++){
+        vector<int> idx(K);
+        vector<float> dist(K);
+        double mean_dist=0;
+        pcl::PointCloud<PointType>::Ptr ctmp=pcl::PointCloud<PointType>::Ptr(new pcl::PointCloud<PointType>);
+        kdtree->nearestKSearch (cloud->points[i], K, idx, dist);        
+        for(int j=0;j<idx.size();j++){
+            ctmp->points.push_back(cloud->points[idx[j]]);            
+        }        
+
+        Feature f;
+        rst_ThinPlaneAngle_.records_[i].id_=i;
+        rst_ThinPlaneAngle_.records_[i].item1_=f.ThinPlaneAngle(ctmp);
     }
 }
 
@@ -559,10 +642,10 @@ void PointSetFeatures::ApplyDensity(pcl::PointCloud<PointType>::Ptr cloud,double
 }
 
 
-void PointSetFeatures::ApplyKnnPlaneProjection(pcl::PointCloud<PointType>::Ptr cloud,int K)
+void PointSetFeatures::ApplyThinPlaneProjection(pcl::PointCloud<PointType>::Ptr cloud,int K)
 {
-    flag_KnnPlaneProjection_=1;
-    rst_KnnPlaneProjection_.Resize(cloud->points.size());
+    flag_ThinPlaneProjection_=1;
+    rst_ThinPlaneProjection_.Resize(cloud->points.size());
     pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
     kdtree->setInputCloud(cloud);
 
@@ -576,8 +659,8 @@ void PointSetFeatures::ApplyKnnPlaneProjection(pcl::PointCloud<PointType>::Ptr c
             ctmp->points.push_back(cloud->points[idx[j]]);
         }
         Feature f;
-        rst_KnnPlaneProjection_.records_[i].id_=i;
-        rst_KnnPlaneProjection_.records_[i].item1_=f.KnnPlaneProjector(ctmp);
+        rst_ThinPlaneProjection_.records_[i].id_=i;
+        rst_ThinPlaneProjection_.records_[i].item1_=f.ThinPlaneProjector(ctmp);
     }
 }
 
@@ -612,4 +695,189 @@ void PointSetFeatures::ApplyCentroidAndCentre(pcl::PointCloud<PointType>::Ptr cl
         rst_CentroidAndCentre_.records_[i].id_=i;
         rst_CentroidAndCentre_.records_[i].item1_=dist_tmp;
     }
+}
+
+
+// void PointSetFeatures::ApplySlope(pcl::PointCloud<PointType>::Ptr cloud)
+// {
+//     int K=100;
+    
+//     rst_slope_.Resize(cloud->points.size());
+//     rst_gap_.Resize(cloud->points.size());
+//     rst_pulse_.Resize(cloud->points.size());
+    
+//     // Init xtmp
+//     Eigen::MatrixXd xtmp;
+//     xtmp.resize(K,1);
+//     for(int i=0;i<K;i++)
+//         xtmp(i,0)=i;
+
+//     // Init ytmp
+//     pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+// 	kdtree->setInputCloud(cloud);
+// 	for(int i=0;i<cloud->points.size();i++){
+// 		vector<int> idx(K);
+// 		vector<float> dist(K);
+//         vector<float> dist_gap(K);
+//         Eigen::MatrixXd ytmp;
+//         ytmp.resize(K,1);
+//         double gap_max=0;
+
+// 		kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+//         ytmp(0,0)=dist[0];
+//         gap_max=gap_max>dist[0] ? gap_max:dist[0];
+//         for(int j=1;j<dist.size();j++){
+//             ytmp(j,0)=dist[j];
+
+//             // dist gap
+//             dist_gap[j]=dist[j]-dist[j-1];
+//             gap_max=gap_max>dist_gap[j] ? gap_max:dist_gap[j];
+//         }
+
+//         rst_pulse_.records_[i].id_=i;
+//         rst_pulse_.records_[i].item1_=0;
+//         for(int j=1;j<dist_gap.size()-1;j++){
+//             double pulse_tmp=(dist_gap[j]-dist_gap[j-1])*(dist_gap[j]-dist_gap[j+1]);
+//             pulse_tmp= pulse_tmp > rst_pulse_.records_[i].item1_ ? pulse_tmp: rst_pulse_.records_[i].item1_;
+//             rst_pulse_.records_[i].item1_=pulse_tmp;
+//         }
+
+
+//         Eigen::MatrixXd atmp=(xtmp.transpose()*xtmp).inverse()*xtmp.transpose()*ytmp;
+//         rst_slope_.records_[i].id_=i;
+//         rst_slope_.records_[i].item1_=atmp(0,0);
+
+        
+//         rst_gap_.records_[i].id_=i;
+//         rst_gap_.records_[i].item1_=gap_max;
+// 	}
+// }
+
+
+
+void PointSetFeatures::ApplykNN(pcl::PointCloud<PointType>::Ptr cloud, int K,string mode)
+{
+    pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+	kdtree->setInputCloud(cloud);
+
+    if("slope"==mode){
+        rst_slope_.Resize(cloud->points.size());
+        Eigen::MatrixXd xtmp(K,1);
+        for(int i=0;i<K;i++) xtmp(i,0)=i;
+
+        // Init ytmp
+        pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+        kdtree->setInputCloud(cloud);
+        #pragma omp parallel for
+        for(int i=0;i<cloud->points.size();i++){
+            vector<int> idx(K);
+            vector<float> dist(K);
+            vector<float> dist_gap(K);
+            Eigen::MatrixXd ytmp(K,1);
+            kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+            for(int j=0;j<dist.size();j++) ytmp(j,0)=dist[j];
+            Eigen::MatrixXd atmp=(xtmp.transpose()*xtmp).inverse()*xtmp.transpose()*ytmp;
+            rst_slope_.records_[i].id_=i;
+            rst_slope_.records_[i].item1_=atmp(0,0);
+        }
+    }
+    else if("gap_max"==mode){
+        rst_gap_max_.Resize(cloud->points.size());
+        #pragma omp parallel for
+        for(int i=0;i<cloud->points.size();i++){
+            vector<int> idx(K);
+            vector<float> dist(K);
+            vector<float> dist_gap(K-1);
+            kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+            for(int j=1;j<dist.size();j++){
+                dist_gap[j-1]=dist[j]-dist[j-1];
+            }
+            auto gap_max=std::max_element(dist_gap.begin(),dist_gap.end());
+            rst_gap_max_.records_[i].id_=i;
+            rst_gap_max_.records_[i].item1_=*gap_max;
+        }
+    }
+    else if("gap_var"==mode){
+        rst_gap_var_.Resize(cloud->points.size());
+        #pragma omp parallel for
+        for(int i=0;i<cloud->points.size();i++){
+            vector<int> idx(K);
+            vector<float> dist(K);
+            vector<float> dist_gap(K-1);
+            kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+            for(int j=1;j<dist.size();j++){
+                dist_gap[j-1]=dist[j]-dist[j-1];
+            }
+            double gap_sum = std::accumulate(dist_gap.begin(),dist_gap.end(),0);
+            double gap_mean= gap_sum/ dist_gap.size();
+            double accum=0;
+            for(int j=0;j<dist_gap.size();j++){
+                accum+=pow(dist_gap[j]-gap_mean,2);
+            }
+            double stdev=sqrt(accum/(dist_gap.size()-1));
+            rst_gap_var_.records_[i].id_=i;
+            rst_gap_var_.records_[i].item1_=stdev;
+        }
+    }
+    else if("gap_max_var"==mode){
+        rst_gap_max_.Resize(cloud->points.size());
+        rst_gap_var_.Resize(cloud->points.size());
+        #pragma omp parallel for
+        for(int i=0;i<cloud->points.size();i++){
+            vector<int> idx(K);
+            vector<float> dist(K);
+            vector<float> dist_gap(K-1);
+            kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+            for(int j=1;j<dist.size();j++){
+                dist_gap[j-1]=dist[j]-dist[j-1];
+            }
+
+            // Get gap max and variance
+            double gap_sum = std::accumulate(dist_gap.begin(),dist_gap.end(),0);
+            double gap_mean= gap_sum/ dist_gap.size();
+            double accum=0;
+            for(int j=0;j<dist_gap.size();j++){
+                accum+=pow(dist_gap[j]-gap_mean,2);
+            }
+            double stdev=sqrt(accum/(dist_gap.size()-1));
+            rst_gap_var_.records_[i].id_=i;
+            rst_gap_var_.records_[i].item1_=stdev;
+
+
+            auto gap_max=std::max_element(dist_gap.begin(),dist_gap.end());
+            rst_gap_max_.records_[i].id_=i;
+            rst_gap_max_.records_[i].item1_=*gap_max;
+        }
+    }
+    else if("pulse"==mode){
+        rst_pulse_.Resize(cloud->points.size());
+        // Init ytmp
+        pcl::search::KdTree<PointType>::Ptr kdtree(new pcl::search::KdTree<PointType>());
+        kdtree->setInputCloud(cloud);
+        #pragma omp parallel for
+        for(int i=0;i<cloud->points.size();i++){
+            vector<int> idx(K);
+            vector<float> dist(K);
+            vector<float> dist_gap(K-1);
+            kdtree->nearestKSearch(cloud->points[i], K, idx, dist);
+
+            for(int j=1;j<dist.size();j++){
+                // dist gap
+                dist_gap[j-1]=dist[j]-dist[j-1];
+            }
+
+            rst_pulse_.records_[i].id_=i;
+            rst_pulse_.records_[i].item1_=0;
+            for(int j=1;j<dist_gap.size()-1;j++){
+                double pulse_tmp=(dist_gap[j]-dist_gap[j-1])*(dist_gap[j]-dist_gap[j+1]);
+                pulse_tmp= pulse_tmp > rst_pulse_.records_[i].item1_ ? pulse_tmp: rst_pulse_.records_[i].item1_;
+                rst_pulse_.records_[i].item1_=pulse_tmp;
+            }
+        }
+    }
+    else{
+        cout<<"ApplykNN Mode Error!"<<endl;
+    }
+
+    
 }

@@ -1,0 +1,87 @@
+/*
+result= A-(A and B)
+*/
+#include <iostream>	
+#include "PCLExtend.h"
+#include "V3.hpp"
+#include "DataMining.h"
+#include "ImprovedLoop.h"
+#include "EdgeDetection.h"
+#include <Eigen/Dense>
+#include <omp.h>
+#include "AngleBasedOutlier.h"
+#include "PointSetFeatures.h"
+#include "Table.h"
+#include <algorithm>
+
+int main(int argc,char** argv)
+{
+	pcl::PointCloud<PointType>::Ptr cloud(new pcl::PointCloud<PointType>);	
+	if (pcl::io::loadPLYFile<PointType>(argv[1], *cloud) == -1){
+		PCL_ERROR("Couldn't read file test_pcd.pcd \n");
+		return (-1);
+	}
+
+	PointSetFeatures psf(cloud);
+    /* 
+		Step 01: use minor eigenvalue to create believable mask 
+	*/
+	psf.ApplyMinorEigenvalue(cloud);
+	psf.rst_MinorEigenvalue_.Standardize_Zscore();	
+	psf.rst_MinorEigenvalue_.Normalize_Tanh();
+	psf.rst_MinorEigenvalue_.SetActiveIndex("1000","believable");
+	// psf.Write("Result/1.ply",psf.cloud_);
+
+	/*
+		 Step 02: unbelivable area processing
+		 		  Local Distance
+	*/
+	psf.ApplySlope(cloud);
+	// psf.rst_slope_.GetBoxplot(5.0);
+	psf.rst_pulse_.GetBoxplot(2.0);
+
+	/*
+		Step 03: Blending outlier
+	*/
+	vector<int> oidx;
+	std::set_difference(psf.rst_pulse_.unbelievable_idx_.begin(),
+						psf.rst_pulse_.unbelievable_idx_.end(),
+						psf.rst_MinorEigenvalue_.believable_idx_.begin(),
+						psf.rst_MinorEigenvalue_.believable_idx_.end(),
+						std::back_inserter(oidx));
+	vector<int> nidx;
+	vector<int> idx;
+
+	// #pragma omp parallel for
+	for(int i=0;i<cloud->points.size();i++){
+		idx.push_back(i);
+	}
+	std::set_difference(idx.begin(),
+						idx.end(),
+						oidx.begin(),
+						oidx.end(),
+						std::back_inserter(nidx));
+
+	/*
+		Step 04: output result
+	*/
+	pcl::PointCloud<PointType>::Ptr rst_cloud(new pcl::PointCloud<PointType>);
+
+	// #pragma omp parallel for
+	for(int i=0;i<nidx.size();i++){
+		int tmp_idx=nidx[i];
+		rst_cloud->points.push_back(cloud->points[tmp_idx]);
+	}
+	pcl::io::savePLYFileBinary("Result/rst.ply",*rst_cloud);
+
+	#pragma omp parallel for
+	for(int i=0;i<oidx.size();i++){
+		int tmp_idx=oidx[i];
+		cloud->points[tmp_idx].r=255;
+		cloud->points[tmp_idx].g=0;
+		cloud->points[tmp_idx].b=0;
+	}
+	pcl::io::savePLYFileBinary("Result/rst_color.ply",*cloud);
+
+	return 0;
+}

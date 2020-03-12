@@ -5,13 +5,13 @@ V3 get_color(float min,float max,float confidence)
         float n=4.0; //
         float step=(max-min)/n;
         float c=confidence-min;
-        if(c<step)
+        if(c<step)// blue
         {
                 color_temp.r=0;
                 color_temp.g=c/step*255;
                 color_temp.b=255;
         }
-        else if(c<2*step)
+        else if(c<2*step) //
         {
                 color_temp.r=0;
                 color_temp.g=255;

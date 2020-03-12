@@ -1,0 +1,34 @@
+PointSetFeatures psf;
+psf.ApplykNN(cloud,200,"gap_max");	
+psf.rst_gap_max_.Standardize_Zscore();
+psf.rst_gap_max_.Normalize_Tanh();
+psf.rst_gap_max_.Write("Result/rst_color.csv");
+
+psf.rst_gap_max_.GetCorrespondingColor();
+for(int i=0;i<cloud->points.size();i++)
+{
+    V3 ctmp=psf.rst_gap_max_.color_[i];
+    cloud->points[i].r=ctmp.r;
+    cloud->points[i].g=ctmp.g;
+    cloud->points[i].b=ctmp.b;
+}
+pcl::io::savePLYFileBinary("Result/rst_color.ply",*cloud);
+
+
+
+// slope
+PointSetFeatures psf;
+psf.ApplykNN(cloud,100,"slope");	
+psf.rst_slope_.Standardize_Zscore();
+// psf.rst_slope_.Normalize_Tanh();
+psf.rst_slope_.Write("Result/rst_color.csv");
+
+psf.rst_slope_.GetCorrespondingColor();
+for(int i=0;i<cloud->points.size();i++)
+{
+    V3 ctmp=psf.rst_slope_.color_[i];
+    cloud->points[i].r=ctmp.r;
+    cloud->points[i].g=ctmp.g;
+    cloud->points[i].b=ctmp.b;
+}
+pcl::io::savePLYFileBinary("Result/rst_color.ply",*cloud);
