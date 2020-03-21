@@ -1,1 +1,1 @@
-This is the code for improved LoOP.
+This is the code for MMOD (Simple Version).
