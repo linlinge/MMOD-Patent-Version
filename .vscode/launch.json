@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${workspaceFolder}/build/COR",
-            "args": ["/home/llg/dataset/scarecrow.ply"],
+            "args": ["/home/llg/dataset/stl004_total.ply"],
             "stopAtEntry": false,
             "cwd": "${workspaceFolder}",
             "environment": [],

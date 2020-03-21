@@ -20,3 +20,4 @@ class Statistics
 
 double GaussErrorFunction(double x);
 double LossFunc(double x);
+double GaussianKernel(double x);

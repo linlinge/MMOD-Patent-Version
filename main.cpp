@@ -36,10 +36,11 @@ void Method01_pulse(pcl::PointCloud<PointType>::Ptr cloud)
 void Method02_Slope(pcl::PointCloud<PointType>::Ptr cloud)
 {
 	PointSetFeatures psf;
-	psf.ApplykNN(cloud,100,"slope");	
+	psf.ApplykNN(cloud,100,"slope");
+	psf.rst_slope_.Write("Result/rst_color.csv");	
 	psf.rst_slope_.Standardize_Zscore();
 	psf.rst_slope_.Normalize_Tanh();
-	psf.rst_slope_.Write("Result/rst_color.csv");
+	
 
 	psf.rst_slope_.GetCorrespondingColor();
 	for(int i=0;i<cloud->points.size();i++)

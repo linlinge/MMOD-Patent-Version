@@ -516,3 +516,7 @@ void Table::SetActiveIndex(string erea_color, string status)
      
 }
 
+void Table::KDE()
+{
+    
+}

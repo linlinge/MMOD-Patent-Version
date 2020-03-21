@@ -61,6 +61,7 @@ class Table
 		void GetBoxplot(double lamda=20.0,int item_index=1);
 		void SortBackup(int item_index=1);		
 		void Print();
+		void KDE();
 
 		// Standarize with Z-score method
 		void Standardize_Zscore(int item_index=1);

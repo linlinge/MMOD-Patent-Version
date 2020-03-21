@@ -39,3 +39,8 @@ double LossFunc(double x)
 {
 	return max((double)0.0f,GaussErrorFunction(x/sqrt(2)));
 }
+
+double GaussianKernel(double x)
+{
+	return 1.0/sqrt(2.0*M_PI)*exp(-x*x/2.0);
+}
